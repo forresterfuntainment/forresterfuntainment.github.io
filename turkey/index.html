@@ -19,6 +19,8 @@
     #keys button:active { background: #2f8f8a; transform: translateY(3px); box-shadow: 0 2px 0 #0b1012; }
     #keys svg { width: 46%; height: 46%; fill: #f3e9d2; pointer-events: none; }
     #kU { grid-area: 1 / 2; } #kL { grid-area: 2 / 1; } #kR { grid-area: 2 / 3; } #kD { grid-area: 3 / 2; }
+    #watch { -webkit-appearance: none; appearance: none; margin: 0; padding: 12px 18px; background: #1f2a30; color: #f3e9d2; border: 2px solid #e0a526; border-radius: 12px; box-shadow: 0 4px 0 #0b1012; font: 14px "Bungee", "Arial Black", sans-serif; letter-spacing: .06em; touch-action: none; -webkit-tap-highlight-color: transparent; }
+    #watch:active { background: #2f8f8a; transform: translateY(3px); box-shadow: 0 2px 0 #0b1012; }
     #tip { color: #7cc4bc; font: 12px "Bungee", "Arial Black", sans-serif; letter-spacing: .08em; text-align: center; line-height: 1.7; }
   }
   #err { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: #f3e8be; font: 18px Futura, "Century Gothic", "Trebuchet MS", sans-serif; text-align: center; padding: 2em; }
@@ -31,7 +33,7 @@
   <button id="kL" aria-label="Hop left"><svg viewBox="0 0 10 10"><polygon points="1,5 9,.5 9,9.5"/></svg></button>
   <button id="kR" aria-label="Hop right"><svg viewBox="0 0 10 10"><polygon points="9,5 1,.5 1,9.5"/></svg></button>
   <button id="kD" aria-label="Hop down"><svg viewBox="0 0 10 10"><polygon points="5,9 9.5,1 .5,1"/></svg></button>
-</div><div id="tip">SWIPING WORKS TOO<br>TURN SIDEWAYS FOR A BIGGER PICTURE</div></div>
+</div><button id="watch">&#9654;&nbsp; WATCH THE CHASE SCENES</button><div id="tip">SWIPING WORKS TOO<br>TURN SIDEWAYS FOR A BIGGER PICTURE</div></div>
 <script>
 "use strict";
 // The Great Turkey Escape (a Forrester Funtainment game). One file, no assets: every model is built from three superquadric meshes.
@@ -250,9 +252,11 @@ try { hi = +localStorage.getItem('tf_hi') || 0; } catch (e) {}
 const T = { x: 0, row: 0, fx: 0, fr: 0, tx: 0, tr: 0, t: 1, yaw: 0, tyaw: 0, land: 1, maxRow: 0, slot: -1 };
 const oven = { on: false, x: 0, side: 1, t: 0, cx: 0, speed: 1, fromX: 0 };
 let dead = { kind: '', x: 0, row: 0 }, queued = null, aiCool = 0, aiWait = 0, shake = 0;
-const forceDemo = () => location.hash === '#demo';
+const forceDemo = () => location.hash === '#demo', forceReel = () => location.hash === '#chases';   // #chases loops the five intermissions
+let reelN = 0;
 // The card: ?to=Grandma&from=Keith+and+Darci on your own host; #to-Grandma also works (dashes become spaces).
-const LAST = 5, LIVES = 5;
+let chaseN = 1, chaseThen = 'next', demoSpin = 0;
+const LAST = 5, LIVES = 5, DEMO_CARD = 5.5;       // seconds the attract loop holds the card between levels and at game over
 const tidy = s => (s || '').replace(/\s+/g, ' ').trim().slice(0, 28);
 let cardTo = '', cardFrom = 'The Forresters', touch = false;
 try {
@@ -301,6 +305,19 @@ function spawn(fast) {
 function startGame(isDemo, atLevel) {
   demo = isDemo; score = 0; lives = LIVES; level = atLevel || 1; slots = [0, 0, 0, 0, 0]; initLanes(); spawn(false); aiWait = 0;
 }
+function nextLevel() { level++; slots = [0, 0, 0, 0, 0]; initLanes(); spawn(false); }
+function startChase(n, then) { mode = 'chase'; modeT = 0; chaseN = n; chaseThen = then; jingle(n); }
+const SHOW = [220, 300, 200, 22];                   // the title's "watch the chase scenes" button, in HUD pixels
+function startReel() { gesture(); startChase(1, 'reel'); }
+function endChase() {
+  hush(); modeT = 0;
+  if (chaseThen === 'reel' && chaseN < 5) return startChase(chaseN + 1, 'reel');            // the full show, one through five
+  if (chaseThen === 'demo') return startGame(true);
+  if (chaseThen === 'win') { mode = 'win'; if (!demo && score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } }
+  else if (chaseThen === 'dcard' || chaseThen === 'over') mode = chaseThen;
+  else if (chaseThen === 'title' || chaseThen === 'reel') { mode = 'title'; idleT = 0; }
+  else nextLevel();
+}
 function die(kind) {
   if (mode !== 'play') return;
   mode = 'dead'; modeT = 0; dead = { kind, x: lerp(T.fx, T.tx, T.t >= 1 ? 1 : T.t), row: T.t < .5 ? T.fr : T.tr }; if (T.t >= 1) dead.x = T.x;
@@ -327,7 +344,7 @@ function landed() {
   T.x = T.tx; T.row = T.tr; T.land = 0;
   if (T.row > T.maxRow) { score += 10 * (T.row - T.maxRow); T.maxRow = T.row; }
   if (T.row === 10) {
-    slots[T.slot] = 1; score += 50; beep(660, .1, 'square', .05, 330);
+    slots[T.slot] = 1; score += 50; beep(660, .1, 'square', .05, 330); gobble();
     if (slots.every(s => s)) { score += 500; mode = 'clear'; modeT = 0; beep(880, .5, 'triangle', .06, 440); }
     else spawn(false);
   } else if (isRiver(T.row) && !floaterUnder(T.row, T.x)) die('splash');
@@ -379,6 +396,36 @@ function beep(f, d, type, v, slide) {
     if (slide) o.frequency.linearRampToValueAtTime(Math.max(40, f + slide), t + d);
     g.gain.setValueAtTime(v || .04, t); g.gain.linearRampToValueAtTime(0, t + d); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + d + .02); } catch (e) {}
 }
+let tune = [];
+function hush() { for (const o of tune) { try { o.stop(); } catch (e) {} } tune = []; }
+function jingle(n) {                                // intermission ditty: a little gallop, a step higher each scene; it turns on them in the last one
+  hush(); if (!ac || muted || demo) return;
+  try {
+    const pat = [0, 4, 7, 4, 9, 7, 4, 7, 0, 4, 7, 4, 2, 4, 0, -1], step = .17, t0 = ac.currentTime + .15, len = CH_LEN[n] - .6;
+    for (let i = 0; i * step < len; i++) {
+      const semi = pat[i % 16]; if (semi < 0) continue; const t = t0 + i * step, turn = n === 5 && i * step > 4.7;
+      const o = ac.createOscillator(), g = ac.createGain(); o.type = turn ? 'sawtooth' : 'square';
+      o.frequency.setValueAtTime(523.25 * Math.pow(2, (semi + n - 1 - (turn ? 17 : 0)) / 12), t);
+      g.gain.setValueAtTime(turn ? .04 : .028, t); g.gain.linearRampToValueAtTime(0, t + step * .8); o.connect(g); g.connect(ac.destination); o.start(t); o.stop(t + step); tune.push(o);
+    }
+  } catch (e) {}
+}
+let lastGob = -1;
+function gobble() {                                 // Darci's gobble: a falling run of little yelps, a different pitch every time
+  if (!ac || muted || demo) return;
+  try {
+    let k; do { k = Math.floor(Math.random() * 7); } while (k === lastGob); lastGob = k;
+    const base = 500 * Math.pow(2, (k - 3) / 8), n = 6 + Math.floor(Math.random() * 3), v = .15;
+    const o = ac.createOscillator(), f = ac.createBiquadFilter(), g = ac.createGain(); let t = ac.currentTime + .1; const t0 = t;
+    o.type = 'sawtooth'; f.type = 'bandpass'; f.frequency.value = base * 2.3; f.Q.value = 2.2; g.gain.setValueAtTime(0, t0);
+    for (let i = 0; i < n; i++) {
+      const d = Math.max(.05, .078 - i * .004), fr = base * (1 - i * .045);
+      o.frequency.setValueAtTime(fr * 1.35, t); o.frequency.exponentialRampToValueAtTime(fr * .78, t + d * .85);
+      g.gain.setValueAtTime(.0001, t); g.gain.linearRampToValueAtTime(v, t + d * .2); g.gain.linearRampToValueAtTime(.0001, t + d * .92); t += d;
+    }
+    o.connect(f); f.connect(g); g.connect(ac.destination); o.start(t0); o.stop(t + .03);
+  } catch (e) {}
+}
 function gesture() { if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } if (ac && ac.state === 'suspended') ac.resume().catch(() => {}); }
 
 // ---------- input ----------
@@ -389,7 +436,8 @@ function press(dx, dr, start) {
   if (mode === 'card') { mode = 'title'; modeT = 0; return; }
   if (mode === 'title') { if (modeT > .3) startGame(false); return; }
   if (mode === 'over') { if (start && modeT > .8) startGame(false, level); return; }      // a card, so "try again" keeps your level
-  if (mode === 'win') { if (start && modeT > 1.2) { level++; slots = [0, 0, 0, 0, 0]; initLanes(); spawn(false); } return; }
+  if (mode === 'win') { if (start && modeT > 1.2) nextLevel(); return; }
+  if (mode === 'chase') { if (start && modeT > .5) { if (chaseThen === 'demo' && !forceDemo()) { hush(); mode = 'title'; modeT = 0; } else endChase(); } return; }               // tap or space skips the intermission
   if (dx || dr) hopTo(dx, dr);
 }
 addEventListener('keydown', e => {
@@ -397,6 +445,8 @@ addEventListener('keydown', e => {
   if (k === 'arrowup' || k === 'w') d = [0, 1]; else if (k === 'arrowdown' || k === 's') d = [0, -1];
   else if (k === 'arrowleft' || k === 'a') d = [-1, 0]; else if (k === 'arrowright' || k === 'd') d = [1, 0];
   else if (k === 'm') { muted = !muted; return; }
+  else if (k >= '1' && k <= '5' && (mode === 'title' || mode === 'card' || (mode === 'chase' && chaseThen !== 'next' && chaseThen !== 'win'))) { gesture(); startChase(+k, 'title'); return; }
+  else if (k === 'c' && mode === 'title') { startReel(); return; }   // preview an intermission from the title
   else if (k !== ' ' && k !== 'enter') return;
   e.preventDefault(); if (e.repeat && !d) return;
   d ? press(d[0], d[1], false) : press(0, 0, true);
@@ -408,10 +458,15 @@ for (const [id, dx, dr] of [['kU', 0, 1], ['kD', 0, -1], ['kL', -1, 0], ['kR', 1
   b.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); touch = true; press(dx, dr, true); });
   b.addEventListener('pointerup', e => e.stopPropagation());
 }
+const watchB = document.getElementById('watch'); let watchOn = true;                       // the big thumb-sized version for portrait phones
+watchB.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); touch = true; if (mode === 'card' || mode === 'title') startReel(); });
+watchB.addEventListener('pointerup', e => e.stopPropagation());
 addEventListener('contextmenu', e => e.preventDefault());
 for (const ev of ['pointerup', 'touchend', 'click']) addEventListener(ev, gesture, true);   // phones only unlock audio on a finger-up, so catch every one
 addEventListener('pointerup', e => {
   if (!tp) return; const dx = e.clientX - tp[0], dy = e.clientY - tp[1]; tp = null;
+  if (mode === 'title' && !demo) { const r = cv.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W, py = (e.clientY - r.top) / r.height * H;
+    if (px > SHOW[0] - 8 && px < SHOW[0] + SHOW[2] + 8 && py > SHOW[1] - 8 && py < SHOW[1] + SHOW[3] + 8) { startReel(); return; } }
   if (Math.hypot(dx, dy) < 24) press(0, 1, true);
   else if (Math.abs(dx) > Math.abs(dy)) press(Math.sign(dx), 0, false); else press(0, dy < 0 ? 1 : -1, false);
 });
@@ -419,12 +474,13 @@ addEventListener('pointerup', e => {
 // ---------- update ----------
 function update(dt) {
   time += dt; modeT += dt; shake = Math.max(0, shake - dt);
+  const wOn = (mode === 'card' || mode === 'title') && !demo; if (wOn !== watchOn) { watchOn = wOn; watchB.style.visibility = wOn ? 'visible' : 'hidden'; }
   for (const ln of lanes) if (ln) for (const it of ln.items) { it.x += ln.dir * ln.speed * dt; if (it.x > WRAP) it.x -= 2 * WRAP; if (it.x < -WRAP) it.x += 2 * WRAP; }
   if (oven.on) { oven.t += dt * oven.speed; if (oven.t > 1.75) oven.on = false; }
-  if (mode === 'card') { if (forceDemo()) startGame(true); }
+  if (mode === 'card') { if (forceDemo()) startGame(true); else if (forceReel()) startChase(reelN++ % 5 + 1, 'title'); else if (modeT > 12) { mode = 'title'; modeT = 0; idleT = 0; } }   // nobody tapped: open the card for them
   else if (mode === 'win') { if (demo && modeT > 4) { demo = false; mode = 'title'; modeT = 0; idleT = forceDemo() ? 99 : 0; } }
   else if (mode === 'title') {
-    idleT += dt; if (idleT > 9 || forceDemo()) startGame(true);
+    idleT += dt; if (forceReel()) startChase(reelN++ % 5 + 1, 'title'); else if (idleT > 9 || forceDemo()) startChase(demoSpin++ % 5 + 1, 'demo');   // the attract loop opens on a chase, a different one each time round
   } else if (mode === 'spawn') {
     if (oven.t >= .98) { mode = 'play'; T.t = 1; T.x = oven.cx; T.row = 0; T.tyaw = 0; T.land = 0; beep(440, .06, 'square', .04, 200); }
   } else if (mode === 'play') {
@@ -440,14 +496,16 @@ function update(dt) {
       if (demo && mode === 'play') think(dt);
     }
   } else if (mode === 'dead') {
-    if (modeT > 1.25) { lives--; if (lives <= 0) { mode = 'over'; modeT = 0; if (score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } } else spawn(true); }
+    if (modeT > 1.25) { lives--; if (lives <= 0 && demo) startChase(demoSpin++ % 5 + 1, 'over');   // a demo that loses still gets a chase, the next one in rotation each time
+    else if (lives <= 0) { mode = 'over'; modeT = 0; if (score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } } else spawn(true); }
   } else if (mode === 'clear') {
-    if (modeT > 1.6) {
-      if (level === LAST) { mode = 'win'; modeT = 0; if (!demo && score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } }
-      else { level++; slots = [0, 0, 0, 0, 0]; initLanes(); spawn(false); }
-    }
+    if (modeT > 1.6) startChase((level - 1) % 5 + 1, level === LAST ? 'win' : demo ? 'dcard' : 'next');   // every cleared level earns an intermission
+  } else if (mode === 'chase') {
+    if (modeT > CH_LEN[chaseN]) endChase();
+  } else if (mode === 'dcard') {
+    if (modeT > DEMO_CARD) nextLevel();
   } else if (mode === 'over') {
-    if (demo && modeT > 3) { demo = false; mode = 'title'; modeT = 0; idleT = forceDemo() ? 99 : 0; }
+    if (demo && modeT > DEMO_CARD) { demo = false; mode = 'title'; modeT = 0; idleT = forceDemo() ? 99 : 0; }
   }
   T.land = Math.min(1, T.land + dt * 6);
   let dy = T.tyaw - T.yaw; while (dy > Math.PI) dy -= 2 * Math.PI; while (dy < -Math.PI) dy += 2 * Math.PI; T.yaw += dy * Math.min(1, dt * 22);
@@ -552,6 +610,148 @@ function sputnik(x, y, R, col) {                    // the ad cards' eight-point
 function presents(y) {
   text('BROUGHT TO YOU BY', W / 2, y, 9, P.tealLt, 'center'); text('Forrester Funtainment', W / 2, y + 22, 27, P.orange, 'center', LOB, 2);
 }
+const SIGN = 'WITH LOVE AND BEST WISHES';           // Grandma Irma's card line
+function wishes(y, big, name) {                     // the card itself: greeting, Irma's sign-off, who it's from
+  text('Happy Thanksgiving', W / 2, y, big, P.cream, 'center', LOB, 3);
+  text(SIGN, W / 2, y + big * .95, 10, P.tealLt, 'center'); text(cardFrom, W / 2, y + big * .95 + 30, fit(cardFrom, 460, name, LOB), P.orange, 'center', LOB, 2);
+}
+// ---------- intermissions: the family chases the turkey (flat rubber-hose cartoons on a cream title card) ----------
+const INK = '#10171a', PAPER = '#fffaf0', GY = 252, CH_LEN = [0, 6.2, 6.4, 6.8, 6.6, 9.7];
+const CH_CAP = ['', 'DINNER IS LEAVING', 'REINFORCEMENTS', 'ALL HANDS', 'RILEY HAS IT HANDLED', 'THE TURKEY HAS HAD ENOUGH'];
+function ink(w) { hx.strokeStyle = INK; hx.lineWidth = w || 2; hx.lineCap = 'round'; hx.lineJoin = 'round'; }
+function blob(x, y, rx, ry, col, rot, w) { hx.beginPath(); hx.ellipse(x, y, rx, ry, rot || 0, 0, 7); hx.fillStyle = col; hx.fill(); if (w !== 0) { ink(w || 2); hx.stroke(); } }
+function hose(x1, y1, x2, y2, bend, w, col) {      // a noodle limb
+  const mx = (x1 + x2) / 2 - (y2 - y1) * bend, my = (y1 + y2) / 2 + (x2 - x1) * bend;
+  hx.beginPath(); hx.moveTo(x1, y1); hx.quadraticCurveTo(mx, my, x2, y2); hx.strokeStyle = col || INK; hx.lineWidth = w || 3.2; hx.lineCap = 'round'; hx.stroke();
+}
+function poly(pts, col, w) { hx.beginPath(); hx.moveTo(pts[0], pts[1]); for (let i = 2; i < pts.length; i += 2) hx.lineTo(pts[i], pts[i + 1]); hx.closePath(); hx.fillStyle = col; hx.fill(); if (w !== 0) { ink(w || 2); hx.stroke(); } }
+function face(hx0, hy, scared) {                    // pie-cut eyes, cheek, mouth; faces right
+  for (const ex of [.5, 7.5]) { blob(hx0 + ex, hy - 1.5, 2.3, scared ? 5 : 4.2, INK, 0, 0); hx.fillStyle = PAPER; hx.fillRect(hx0 + ex + .2, hy - 4, 1.6, 1.8); }
+  hx.globalAlpha = .55; blob(hx0 - 3, hy + 5, 2.6, 2, P.red, 0, 0); hx.globalAlpha = 1;
+  if (scared) blob(hx0 + 6, hy + 7, 2.6, 3.4, INK, 0, 0);
+  else { hx.beginPath(); hx.arc(hx0 + 4, hy + 4, 5, .25, 2.2); ink(1.6); hx.stroke(); }
+}
+function legs(ph, hipY, shoe, boot) {
+  for (const s of [Math.PI, 0]) {
+    const fx = Math.cos(ph + s) * 12, fy = GY - 3 - Math.max(0, -Math.sin(ph + s)) * 9;
+    hose(-1, hipY, fx, fy, -.28, 3.2); blob(fx + 3, fy + (boot ? -1 : 0), boot ? 7 : 6, boot ? 4.6 : 3.4, shoe, 0, 1.6);
+    if (boot) { hx.beginPath(); hx.moveTo(fx - 3, fy + 2.6); hx.lineTo(fx + 9, fy + 2.6); hx.strokeStyle = P.must; hx.lineWidth = 1.3; hx.stroke(); }
+  }
+}
+function glove(x, y) { blob(x, y, 3.6, 3.6, PAPER, 0, 1.6); }
+// who: 'darci' | 'keith' | 'cevin'.  Drawn at the origin facing right; ph is the run phase, scared swaps the face and drops the prop.
+function kid(who, ph, scared) {
+  const bob = Math.abs(Math.sin(ph)) * 3, hipY = GY - 24 - bob, shY = GY - 38 - bob, hy = GY - 53 - bob, hx0 = 3;
+  legs(ph, hipY, who === 'cevin' ? P.red : INK, who === 'keith');
+  if (who === 'darci') {
+    blob(hx0 - 4, hy + 2, 15.5, 15, INK, 0, 0);                                             // the bob
+    poly([-9, shY - 1, 9, shY - 1, 14, hipY + 8, -14, hipY + 8], INK, 0);                   // black dress
+    hx.strokeStyle = PAPER; hx.lineWidth = 1.4; hx.beginPath(); hx.moveTo(-13, hipY + 6.5); hx.lineTo(13, hipY + 6.5); hx.stroke();
+  } else if (who === 'keith') {
+    poly([-8, hipY - 2, 8, hipY - 2, 9, hipY + 8, -9, hipY + 8], P.must);                   // shorts
+    poly([-9, shY - 1, 9, shY - 1, 9, hipY, -9, hipY], P.teal);                             // polo
+    hx.beginPath(); hx.moveTo(3, shY); hx.lineTo(3, shY + 8); ink(1.4); hx.stroke();
+  } else {
+    poly([-8, hipY - 2, 8, hipY - 2, 9, hipY + 8, -9, hipY + 8], P.teal);
+    poly([-9, shY - 1, 9, shY - 1, 9, hipY, -9, hipY], P.must);                             // striped tee
+    hx.strokeStyle = P.cream; hx.lineWidth = 2; for (const yy of [shY + 4, shY + 9]) { hx.beginPath(); hx.moveTo(-8, yy); hx.lineTo(8, yy); hx.stroke(); }
+  }
+  // arms and props
+  if (scared) { hose(0, shY + 3, 19, hy - 8, -.3); hose(0, shY + 3, -15, hy - 9, .3); }
+  else if (who === 'darci') {                                                               // platter and dome, held out front
+    hose(0, shY + 3, 19, shY + 1, .25); glove(20, shY + 1);
+    hx.beginPath(); hx.arc(29, shY - 2, 11, Math.PI, 0); hx.closePath(); hx.fillStyle = '#d5dcd8'; hx.fill(); ink(1.8); hx.stroke(); blob(29, shY - 14, 2.2, 2.2, '#d5dcd8', 0, 1.6);
+    blob(29, shY - 1, 14, 2.6, PAPER, 0, 1.8);
+  } else if (who === 'keith') {                                                             // butterfly net
+    hose(0, shY + 3, 14, shY - 4, .25); hx.beginPath(); hx.moveTo(10, shY + 2); hx.lineTo(34, shY - 30); hx.strokeStyle = '#995c2e'; hx.lineWidth = 2.4; hx.stroke();
+    hx.beginPath(); hx.ellipse(41, shY - 36, 10, 7.5, -.5, 0, 7); hx.fillStyle = 'rgba(124,196,188,.45)'; hx.fill(); ink(1.8); hx.stroke();
+    hx.lineWidth = 1; hx.beginPath(); hx.moveTo(34, shY - 38); hx.lineTo(47, shY - 33); hx.moveTo(39, shY - 43); hx.lineTo(43, shY - 29); hx.stroke(); glove(14, shY - 4);
+  } else {                                                                                  // fork up, napkin tucked in
+    hose(0, shY + 3, 13, shY - 9, .25); hx.strokeStyle = '#8fa09c'; hx.lineWidth = 2.2; hx.beginPath(); hx.moveTo(14, shY - 4); hx.lineTo(14, shY - 26); hx.stroke();
+    hx.lineWidth = 1.5; for (const dx of [-3, 0, 3]) { hx.beginPath(); hx.moveTo(14 + dx, shY - 26); hx.lineTo(14 + dx, shY - 33); hx.stroke(); } hx.beginPath(); hx.moveTo(11, shY - 26); hx.lineTo(17, shY - 26); hx.stroke();
+    glove(14, shY - 9);
+  }
+  // head
+  blob(hx0, hy, 13, 12.5, PAPER);
+  if (who === 'darci') {
+    hx.save(); hx.beginPath(); hx.ellipse(hx0, hy, 13, 12.5, 0, 0, 7); hx.clip(); hx.fillStyle = INK; hx.fillRect(hx0 - 14, hy - 14, 28, 9); hx.fillRect(hx0 - 14, hy - 14, 8, 30); hx.restore();   // bangs
+    poly([hx0 - 2, hy - 13, hx0 - 11, hy - 19, hx0 - 10, hy - 9], P.red, 1.5); poly([hx0 - 2, hy - 13, hx0 + 7, hy - 19, hx0 + 6, hy - 9], P.red, 1.5); blob(hx0 - 2, hy - 13, 2.4, 2.4, P.red, 0, 1.5);
+    poly([-6, shY - 2, 1, shY + 4, 8, shY - 2], PAPER, 1.5);                                // white collar
+  } else {
+    hx.save(); hx.beginPath(); hx.ellipse(hx0, hy, 13, 12.5, 0, 0, 7); hx.clip(); hx.fillStyle = who === 'keith' ? INK : P.orange; hx.fillRect(hx0 - 14, hy - 14, 28, who === 'keith' ? 8 : 7); hx.fillRect(hx0 - 14, hy - 14, 6, who === 'keith' ? 22 : 15); hx.restore();
+    if (who === 'cevin') { hx.beginPath(); hx.ellipse(hx0, hy, 13, 12.5, 0, 0, 7); ink(2); hx.stroke(); }   // Cev's a redhead
+    if (who === 'keith') { blob(hx0 - 2, hy - 10, 11, 5.5, INK, -.12, 0); poly([hx0 + 4, hy - 14, hx0 + 13, hy - 10, hx0 + 6, hy - 6], INK, 0); poly([-2, shY - 2, 3, shY + 3, 8, shY - 2], PAPER, 1.4); }
+    else { poly([hx0 - 3, hy - 12, hx0 + 2, hy - 19, hx0 + 6, hy - 12], P.orange, 1.6); poly([-3, shY - 1, 9, shY - 1, 3, shY + 10], PAPER, 1.4); }
+  }
+  face(hx0, hy, scared);
+  if (scared) { const w = Math.sin(ph * 2) * 2; glove(19, hy - 9 + w); glove(-15, hy - 10 - w); }
+}
+const TAN = '#b9824a';
+function riley(ph, happy) {                         // tan-and-white dog, tan saddle, ear and eye patch, tongue out, always drooling
+  const bob = Math.sin(ph * 2) * 2, by = GY - 20 + bob;
+  for (const [lx, s] of [[-13, 0], [-9, 2.2], [11, 1.1], [15, 3.3]]) { const fx = lx + Math.cos(ph * 2 + s) * 10, fy = GY - 2 - Math.max(0, -Math.sin(ph * 2 + s)) * 7; hose(lx, by + 4, fx, fy, lx < 0 ? -.25 : .25, 4.6, INK); hose(lx, by + 4, fx, fy, lx < 0 ? -.25 : .25, 2.2, lx < 0 ? TAN : PAPER); blob(fx + 1, fy, 3.6, 2.6, PAPER, 0, 1.4); }
+  hose(-19, by - 3, -27, by - 16 + Math.sin(ph * 5) * 4, .3, 4.8, INK); hose(-19, by - 3, -27, by - 16 + Math.sin(ph * 5) * 4, .3, 2.4, TAN);                     // tail
+  blob(0, by, 20, 10.5, PAPER); hx.save(); hx.beginPath(); hx.ellipse(0, by, 20, 10.5, 0, 0, 7); hx.clip(); blob(-5, by - 9, 11, 8, TAN, 0, 0); hx.restore();
+  const hx0 = 22, hy = by - 13;
+  blob(hx0, hy, 10.5, 10, PAPER); blob(hx0 + 10, hy + 4, 7, 5.2, PAPER); blob(hx0 + 16, hy + 1.5, 2.4, 2, INK, 0, 0);
+  poly([hx0 - 8, hy - 6, hx0 - 6, hy - 17, hx0 + 1, hy - 9], TAN, 1.6);                  // ear
+  blob(hx0 + 3, hy - 2, 4.6, 4.8, TAN, 0, 0); blob(hx0 + 3.6, hy - 2, 1.7, 2.5, INK, 0, 0);
+  hx.strokeStyle = P.red; hx.lineWidth = 3; hx.beginPath(); hx.moveTo(hx0 - 8, hy + 8); hx.lineTo(hx0 - 1, hy + 11); hx.stroke();   // collar
+  blob(hx0 + 10, hy + 10 + Math.sin(ph * 4), 2.6, 4.2, P.red, .2, 1.3);                     // tongue
+  for (let i = 0; i < 3; i++) { const d = ((ph * .5 + i / 3) % 1); hx.globalAlpha = 1 - d; blob(hx0 + 4 - d * 30, hy + 12 + d * 16, 1.8, 2.6, P.tealLt, 0, 1); } hx.globalAlpha = 1;
+  if (happy) heart(hx0, hy - 24 + Math.sin(ph) * 2, 5);
+}
+function heart(x, y, s) { hx.beginPath(); hx.moveTo(x, y + s); hx.bezierCurveTo(x - s * 2, y - s * .4, x - s * .6, y - s * 1.6, x, y - s * .5); hx.bezierCurveTo(x + s * .6, y - s * 1.6, x + s * 2, y - s * .4, x, y + s); hx.fillStyle = P.red; hx.fill(); ink(1.4); hx.stroke(); }
+function gobbler(ph, mad) {                         // the star, side on, facing right
+  const bob = Math.abs(Math.sin(ph * 1.5)) * 3, by = GY - 24 - bob;
+  for (const s of [Math.PI, 0]) { const fx = 2 + Math.cos(ph * 1.5 + s) * 11, fy = GY - 2 - Math.max(0, -Math.sin(ph * 1.5 + s)) * 8; hose(2, by + 10, fx, fy, .2, 2.4, P.must); hx.strokeStyle = P.must; hx.lineWidth = 2.2; hx.beginPath(); hx.moveTo(fx - 2, fy); hx.lineTo(fx + 6, fy); hx.stroke(); }
+  const fan = [P.red, P.must, P.orange, P.must, P.red];
+  for (let i = 0; i < 5; i++) { const a = -2.75 + i * .42 + Math.sin(ph * 3) * .04; blob(-6 + Math.cos(a) * 19, by - 4 + Math.sin(a) * 19, 11, 5.4, fan[i], a, 1.6); }
+  blob(0, by, 16, 14, '#995c2e'); blob(-3, by + 2, 8, 5.5, '#542e17', -.5 + Math.sin(ph * 6) * .5, 1.5);           // body, flapping wing
+  hose(11, by - 8, 17, by - 21, -.2, 6, INK); hose(11, by - 8, 17, by - 21, -.2, 3.4, '#c76b5c');                    // neck
+  blob(18, by - 24, 7.5, 7, '#c76b5c');
+  poly([24, by - 26, 32, by - 23, 24, by - 20], P.must, 1.4); blob(24, by - 16, 2.4, 4.4, P.red, .25, 1.3);          // beak, wattle
+  blob(20, by - 26, 3.4, 3.8, PAPER, 0, 1.3); blob(mad ? 21 : 19.2, by - 26, 1.5, 1.8, INK, 0, 0);
+  if (mad) { hx.beginPath(); hx.moveTo(15, by - 32); hx.lineTo(24, by - 28); ink(2); hx.stroke(); }
+  else for (let i = 0; i < 2; i++) { const d = (ph * .35 + i / 2) % 1; hx.globalAlpha = 1 - d; blob(8 - d * 16, by - 34 - d * 10, 1.8, 2.8, P.tealLt, -.5, 1); hx.globalAlpha = 1; }
+}
+function actor(fn, x, flip, scale) { hx.save(); hx.translate(x, GY); hx.scale((flip ? -1 : 1) * (scale || 1), scale || 1); hx.translate(0, -GY); fn(); hx.restore(); }
+function drawChase(n, t) {
+  const top = 58, bot = 292, ph = t * 11;
+  hx.fillStyle = '#141c20'; hx.fillRect(0, 23, W, H - 46);
+  hx.fillStyle = P.must; hx.fillRect(0, top - 5, W, 3); hx.fillRect(0, bot + 2, W, 3);
+  hx.fillStyle = P.cream; hx.fillRect(0, top, W, bot - top);
+  hx.save(); hx.beginPath(); hx.rect(0, top, W, bot - top); hx.clip();
+  hx.globalAlpha = .5; sputnik(96, 112, 26, P.must); sputnik(520, 104, 18, P.teal); sputnik(330, 128, 12, P.orange); hx.globalAlpha = 1;
+  hx.fillStyle = '#e4d6b4'; hx.fillRect(0, GY - 1, W, bot - GY + 1); hx.fillStyle = INK; hx.fillRect(0, GY - 1, W, 2);
+  hx.fillStyle = '#cdbd97'; for (let i = 0; i < 8; i++) { const gx = ((i * 97 - t * 60) % 776 + 776) % 776 - 60; hx.fillRect(gx, GY + 12 + (i % 3) * 8, 26, 2); }
+  const fam = ['darci', 'keith', 'cevin'], K = k => () => kid(fam[k], ph + k * 1.3, false);
+  if (n <= 3) {
+    const v = 138, tx = -50 + v * t;
+    actor(() => gobbler(ph), tx + 96 + Math.sin(t * 3) * 6);
+    for (let k = 0; k < n; k++) actor(K(k), tx - k * 58, false, k === 1 ? 1.06 : k === 2 ? .94 : 1);
+  } else if (n === 4) {
+    const tx = -50 + 118 * t, slow = clamp((t - 2.8) / 1.2, 0, 1), fx = t < 2.8 ? tx : -50 + 118 * 2.8 + 118 * (slow - slow * slow / 2) * 1.2;
+    const rx = Math.min(-200 + 230 * t, tx + 150 - 66);                                     // Riley comes from way back, then falls in beside the bird
+    const pals = rx >= tx + 150 - 67;
+    for (let k = 0; k < 3; k++) actor(() => kid(fam[k], slow >= 1 ? 0 : ph + k * 1.3, slow >= 1), fx - k * 58, false, k === 1 ? 1.06 : k === 2 ? .94 : 1);
+    actor(() => gobbler(ph, false), tx + 150); actor(() => riley(ph, pals), rx);
+    if (slow >= 1) for (let k = 0; k < 3; k++) text('?', fx - k * 58 + 4, GY - 86 - Math.sin(t * 6 + k) * 2, 16, P.red, 'center', BUN, 1);
+  } else {
+    if (t < 4.2) {                                                                          // one more lap of the usual...
+      const tx = -40 + 215 * t;
+      actor(() => gobbler(ph), tx + 150); actor(() => riley(ph, false), tx + 60);
+      for (let k = 0; k < 3; k++) actor(K(k), tx - k * 58, false, k === 1 ? 1.06 : k === 2 ? .94 : 1);
+    } else if (t > 4.9) {                                                                   // ...and then he comes back bigger
+      const u = t - 4.9, lead = 700 - 240 * u;
+      for (let k = 0; k < 3; k++) actor(() => kid(fam[k], ph * 1.2 + k * 1.3, true), lead + k * 54, true, k === 1 ? 1.06 : k === 2 ? .94 : 1);
+      actor(() => riley(ph * 1.2, false), lead + 3 * 54 + 14, true);
+      actor(() => gobbler(ph * .8, true), lead + 3 * 54 + 190, true, 2.7);
+    }
+  }
+  hx.restore();
+  text(CH_CAP[n], W / 2, 41, 12, P.must, 'center');
+}
 function fit(s, maxW, size, fam) { for (; size > 10; size--) { hx.font = `${size}px ${fam}`; if (hx.measureText(s).width <= maxW) break; } return size; }
 function bug() {
   hx.fillStyle = P.teal; hx.fillRect(W - 78, H - 62, 62, 26); hx.fillStyle = P.cream; hx.fillRect(W - 76, H - 60, 58, 22);
@@ -559,7 +759,8 @@ function bug() {
 }
 function drawHud() {
   const blink = Math.floor(time * 2) % 2, pard = slots.reduce((a, b) => a + b, 0);
-  const key = [score, hi, lives, level, pard, mode, demo, fontsReady, touch, (mode === 'card' || mode === 'title' || mode === 'over' || mode === 'win' || demo) ? blink : 0].join('|');
+  const demoCard = demo && (mode === 'over' || mode === 'dcard');   // the attract loop shows the card too
+  const key = [score, hi, lives, level, pard, mode, demo, fontsReady, touch, (mode === 'card' || mode === 'title' || mode === 'over' || mode === 'win' || demo) ? blink : 0, demoCard, mode === 'chase' ? time : 0].join('|');
   if (key === hudKey) return; hudKey = key;
   hx.clearRect(0, 0, W, H);
   hx.fillStyle = P.char; hx.fillRect(0, 0, W, 22); hx.fillRect(0, H - 22, W, 22);
@@ -585,7 +786,7 @@ function drawHud() {
     } else {
       text('Happy Thanksgiving!', W / 2, 78, 46, P.cream, 'center', LOB, 3);
       text('ALL 25 TURKEYS PARDONED', W / 2, 128, 22, P.must, 'center', BUN, 2); text('SCORE ' + pad(score), W / 2, 160, 16, P.cream, 'center');
-      text('WITH LOVE FROM', W / 2, 196, 10, P.tealLt, 'center'); text(cardFrom, W / 2, 222, fit(cardFrom, 460, 30, LOB), P.orange, 'center', LOB, 2);
+      text(SIGN, W / 2, 196, 10, P.tealLt, 'center'); text(cardFrom, W / 2, 222, fit(cardFrom, 460, 30, LOB), P.orange, 'center', LOB, 2);
       if (blink && !demo) text('STILL HUNGRY?  ' + go + ' FOR LEFTOVERS', W / 2, 290, 12, P.cream, 'center');
     }
     bug();
@@ -598,14 +799,22 @@ function drawHud() {
       text('TURKEY ESCAPE', W / 2, 136, 50, P.must, 'center', BUN, 3);
       text('OUT OF THE OVEN  •  OVER THE GRAVY  •  INTO THE FIELD', W / 2, 178, 9, P.tealLt, 'center');
       presents(214);
+      hx.fillStyle = P.char; hx.fillRect(SHOW[0], SHOW[1], SHOW[2], SHOW[3]); hx.strokeStyle = P.must; hx.lineWidth = 1.5; hx.strokeRect(SHOW[0] + .5, SHOW[1] + .5, SHOW[2] - 1, SHOW[3] - 1);
+      hx.fillStyle = P.must; hx.beginPath(); hx.moveTo(SHOW[0] + 12, SHOW[1] + 6); hx.lineTo(SHOW[0] + 21, SHOW[1] + 11); hx.lineTo(SHOW[0] + 12, SHOW[1] + 16); hx.fill();
+      text(touch ? 'WATCH THE CHASE SCENES' : 'WATCH THE CHASE SCENES  (C)', SHOW[0] + SHOW[2] / 2 + 8, SHOW[1] + 11.5, 9, P.cream, 'center');
     } else {
-      text('GAME OVER', W / 2, 104, 52, P.cream, 'center', BUN, 3); text('SCORE ' + pad(score) + '  •  ' + (level > LAST ? 'LEFTOVERS ' + (level - LAST) : 'LEVEL ' + level), W / 2, 156, 16, P.must, 'center');
-      presents(206);
+      text('GAME OVER', W / 2, 62, 36, P.must, 'center', BUN, 3); text('SCORE ' + pad(score) + '  •  ' + (level > LAST ? 'LEFTOVERS ' + (level - LAST) : 'LEVEL ' + level), W / 2, 96, 12, P.tealLt, 'center');
+      wishes(150, 42, 30);                          // most people won't see level 5, so the card rides along here too
     }
-    if (blink) text(mode === 'over' ? go + ' TO TRY THIS LEVEL AGAIN' : go + ' TO PLAY', W / 2, 286, mode === 'over' ? 13 : 15, P.cream, 'center');
+    if (blink) text(mode === 'over' ? go + ' TO TRY THIS LEVEL AGAIN' : go + ' TO PLAY', W / 2, mode === 'over' ? 286 : 276, mode === 'over' ? 13 : 15, P.cream, 'center');
     bug();
   }
-  if (mode === 'clear') text('ALL FIVE PARDONED!', W / 2, H / 2, 30, P.must, 'center', BUN, 2);
+  if (mode === 'chase') { drawChase(chaseN, modeT); if (!demo && modeT > 1.2) text((touch ? 'TAP' : 'SPACE OR TAP') + ' TO SKIP', W / 2, 306, 8, '#5f7d7a', 'center'); bug(); }
+  if (demoCard) {
+    hx.fillStyle = 'rgba(20,28,32,.84)'; hx.fillRect(0, 23, W, H - 46);
+    sputnik(80, 84, 30, P.must); sputnik(566, 76, 22, P.teal); sputnik(548, 250, 13, P.orange); sputnik(70, 262, 15, P.teal);
+    wishes(122, 50, 38); bug();
+  } else if (mode === 'clear') text('ALL FIVE PARDONED!', W / 2, H / 2, 30, P.must, 'center', BUN, 2);
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, hudTex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hc); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 }
@@ -615,7 +824,7 @@ if (document.fonts && document.fonts.load) Promise.all([document.fonts.load('20p
 // ---------- loop ----------
 initLanes(); let last = 0;
 function frame(ts) { const dt = Math.min(.05, (ts - last) / 1000 || 0); last = ts; update(dt); render(); requestAnimationFrame(frame); }
-window.__tf = { set level(v) { level = v; initLanes(); }, get state() { return { mode, demo, score, lives, level, cardTo, cardFrom, row: T.row, x: T.x, slots: slots.slice(), ovenT: oven.t }; }, step(n, dt) { for (let i = 0; i < n; i++) update(dt); } };
+window.__tf = { set level(v) { level = v; initLanes(); }, get state() { return { mode, demo, score, lives, level, cardTo, cardFrom, row: T.row, x: T.x, slots: slots.slice(), ovenT: oven.t }; }, step(n, dt) { for (let i = 0; i < n; i++) update(dt); }, chase(n) { startChase(n, 'next'); } };
 requestAnimationFrame(frame);
 </script>
 </body>
