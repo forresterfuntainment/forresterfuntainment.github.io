@@ -264,6 +264,51 @@ try {
   cardTo = tidy(q.get('to')) || (h ? tidy(decodeURIComponent(h[1]).replace(/[-_]/g, ' ')) : '');
   cardFrom = tidy(q.get('from')) || cardFrom;
 } catch (e) {}
+// ---------- leaderboard: Firebase Firestore over plain REST (no SDK). Leave FB_PROJECT empty and the board stays hidden. ----------
+const FB_PROJECT = 'forresterfuntainment', FB_KEY = 'AIzaSyD1gA5u5EZFvBYUycGfAZak1lZY2ZXd6hQ';               // from the Firebase console: Project settings > General > Your apps (web)
+const FB = FB_PROJECT ? `https://firestore.googleapis.com/v1/projects/${FB_PROJECT}/databases/(default)/documents` : '';
+const ABC = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', BOARD_N = 10;
+let board = null, boardV = 0, myRank = -1, boardThen = 'title', attractN = 0;   // board stays null until it loads, so a dead connection just means no board
+const ini = { L: [0, 0, 0], k: 0, next: 'over', sending: false };
+try { const s = localStorage.getItem('tf_ini'); if (/^[A-Z]{3}$/.test(s)) ini.L = [...s].map(c => ABC.indexOf(c)); } catch (e) {}
+function loadBoard() {
+  if (!FB) return Promise.resolve();
+  return fetch(`${FB}:runQuery?key=${FB_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ structuredQuery: { from: [{ collectionId: 'scores' }], orderBy: [{ field: { fieldPath: 'score' }, direction: 'DESCENDING' }], limit: BOARD_N } }) })
+    .then(r => r.ok ? r.json() : Promise.reject(r.status))
+    .then(rows => { board = rows.filter(r => r.document).map(r => { const f = r.document.fields; return { ini: f.ini.stringValue, score: +f.score.integerValue, level: +f.level.integerValue }; }); boardV++; })
+    .catch(() => {});
+}
+const qualifies = s => !!board && s > 0 && (board.length < BOARD_N || s > board[board.length - 1].score);
+function endRun(next) {                             // game over or the win screen: sign the board first if the score made it
+  if (!demo && qualifies(score)) { mode = 'initials'; modeT = 0; ini.k = 0; ini.next = next; ini.sending = false; beep(660, .12, 'square', .05, 220); }
+  else { mode = next; modeT = 0; }
+}
+function showBoard(then) { mode = 'board'; modeT = 0; boardThen = then; boardV++; }
+function leaveBoard() { mode = boardThen; modeT = 0; myRank = -1; if (mode === 'title') idleT = 0; }
+function iniLetter(d) { if (ini.k < 3) { ini.L[ini.k] = (ini.L[ini.k] + d + 26) % 26; beep(380 + ini.L[ini.k] * 12, .04, 'square', .03); } }
+function typeIni(ch) { if (ini.k < 3) { ini.L[ini.k] = ABC.indexOf(ch); ini.k++; beep(560, .04, 'square', .03); } }
+function iniInput(dx, dr, start) {
+  if (ini.sending) return;
+  if (dx) { ini.k = clamp(ini.k + dx, 0, 3); beep(300, .03, 'square', .03); }
+  else if (ini.k === 3 && (dr > 0 || start)) submitIni();
+  else if (dr) iniLetter(dr);
+  else if (start) submitIni();
+}
+function submitIni() {
+  if (ini.sending) return; ini.sending = true;
+  const s = ini.L.map(i => ABC[i]).join(''), mine = { ini: s, score, level };
+  try { localStorage.setItem('tf_ini', s); } catch (e) {}
+  beep(880, .3, 'triangle', .05, 440);
+  const body = { fields: { ini: { stringValue: s }, score: { integerValue: String(score) }, level: { integerValue: String(level) }, at: { timestampValue: new Date().toISOString() } } };
+  fetch(`${FB}/scores?key=${FB_KEY}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+    .then(r => r.ok ? loadBoard() : null).catch(() => {})
+    .then(() => {
+      let i = board.findIndex(e => e.ini === mine.ini && e.score === mine.score);
+      if (i < 0) { board.push(mine); board.sort((a, b) => b.score - a.score); board.length = Math.min(board.length, BOARD_N); i = board.indexOf(mine); }   // the post failed: still show it here
+      myRank = i; showBoard(ini.next);
+    });
+}
 const sinks = () => level >= 3, speedF = () => [.8, 1, 1.15, 1.3, 1.45][level - 1] || 1.45 + (level - LAST) * .1;
 
 function initLanes() {
@@ -303,7 +348,7 @@ function spawn(fast) {
   T.x = oven.cx; T.row = 0; T.tx = T.x; T.tr = 0; T.fx = oven.x; T.fr = 0; T.yaw = T.tyaw = oven.side * HP;
 }
 function startGame(isDemo, atLevel) {
-  demo = isDemo; score = 0; lives = LIVES; level = atLevel || 1; slots = [0, 0, 0, 0, 0]; initLanes(); spawn(false); aiWait = 0;
+  demo = isDemo; if (!isDemo) loadBoard(); score = 0; lives = LIVES; level = atLevel || 1; slots = [0, 0, 0, 0, 0]; initLanes(); spawn(false); aiWait = 0;
 }
 function nextLevel() { level++; slots = [0, 0, 0, 0, 0]; initLanes(); spawn(false); }
 function startChase(n, then) { mode = 'chase'; modeT = 0; chaseN = n; chaseThen = then; jingle(n); }
@@ -313,7 +358,7 @@ function endChase() {
   hush(); modeT = 0;
   if (chaseThen === 'reel' && chaseN < 5) return startChase(chaseN + 1, 'reel');            // the full show, one through five
   if (chaseThen === 'demo') return startGame(true);
-  if (chaseThen === 'win') { mode = 'win'; if (!demo && score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } }
+  if (chaseThen === 'win') { if (!demo && score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } endRun('win'); }
   else if (chaseThen === 'dcard' || chaseThen === 'over') mode = chaseThen;
   else if (chaseThen === 'title' || chaseThen === 'reel') { mode = 'title'; idleT = 0; }
   else nextLevel();
@@ -433,6 +478,8 @@ function press(dx, dr, start) {
   gesture(); idleT = 0;
   if (demo && !forceDemo()) { demo = false; mode = 'title'; modeT = 0; oven.on = false; return; }
   if (demo) return;
+  if (mode === 'initials') { iniInput(dx, dr, start); return; }
+  if (mode === 'board') { if ((start || boardThen === 'title') && modeT > .6) leaveBoard(); return; }
   if (mode === 'card') { mode = 'title'; modeT = 0; return; }
   if (mode === 'title') { if (modeT > .3) startGame(false); return; }
   if (mode === 'over') { if (start && modeT > .8) startGame(false, level); return; }      // a card, so "try again" keeps your level
@@ -442,6 +489,11 @@ function press(dx, dr, start) {
 }
 addEventListener('keydown', e => {
   const k = e.key.toLowerCase(); let d = null;
+  if (mode === 'initials' && !e.ctrlKey && !e.metaKey && !e.altKey) {                    // type your initials; arrows and Enter still work
+    if (/^[a-z]$/.test(k)) { e.preventDefault(); typeIni(k.toUpperCase()); return; }
+    if (k === 'backspace') { e.preventDefault(); ini.k = Math.max(0, ini.k - 1); return; }
+  }
+  if (k === 't' && (mode === 'title' || mode === 'card') && board) { gesture(); showBoard('title'); return; }   // T: top scores
   if (k === 'arrowup' || k === 'w') d = [0, 1]; else if (k === 'arrowdown' || k === 's') d = [0, -1];
   else if (k === 'arrowleft' || k === 'a') d = [-1, 0]; else if (k === 'arrowright' || k === 'd') d = [1, 0];
   else if (k === 'm') { muted = !muted; return; }
@@ -465,6 +517,14 @@ addEventListener('contextmenu', e => e.preventDefault());
 for (const ev of ['pointerup', 'touchend', 'click']) addEventListener(ev, gesture, true);   // phones only unlock audio on a finger-up, so catch every one
 addEventListener('pointerup', e => {
   if (!tp) return; const dx = e.clientX - tp[0], dy = e.clientY - tp[1]; tp = null;
+  const rr = cv.getBoundingClientRect(), ux = (e.clientX - rr.left) / rr.width * W, uy = (e.clientY - rr.top) / rr.height * H;
+  if (mode === 'initials' && Math.hypot(dx, dy) < 24) {                                   // taps hit the arrows, the letters and OK
+    for (let i = 0; i < 3; i++) if (Math.abs(ux - INI_X[i]) < 30 && uy > 130 && uy < 252) {
+      if (uy > 130 && uy < 168) { ini.k = i; iniLetter(1); } else if (uy > 214 && uy < 252) { ini.k = i; iniLetter(-1); } else if (uy >= 168 && uy <= 214) ini.k = i;
+      return; }
+    if (ux > OKB[0] - 8 && ux < OKB[0] + OKB[2] + 8 && uy > OKB[1] - 8 && uy < OKB[1] + OKB[3] + 8) submitIni();
+    return; }
+  if ((mode === 'title' || mode === 'card') && !demo && board && uy < 26 && Math.abs(ux - W / 2) < 80) { showBoard('title'); return; }   // tap the HI score for the board
   if (mode === 'title' && !demo) { const r = cv.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W, py = (e.clientY - r.top) / r.height * H;
     if (px > SHOW[0] - 8 && px < SHOW[0] + SHOW[2] + 8 && py > SHOW[1] - 8 && py < SHOW[1] + SHOW[3] + 8) { startReel(); return; } }
   if (Math.hypot(dx, dy) < 24) press(0, 1, true);
@@ -480,7 +540,7 @@ function update(dt) {
   if (mode === 'card') { if (forceDemo()) startGame(true); else if (forceReel()) startChase(reelN++ % 5 + 1, 'title'); else if (modeT > 12) { mode = 'title'; modeT = 0; idleT = 0; } }   // nobody tapped: open the card for them
   else if (mode === 'win') { if (demo && modeT > 4) { demo = false; mode = 'title'; modeT = 0; idleT = forceDemo() ? 99 : 0; } }
   else if (mode === 'title') {
-    idleT += dt; if (forceReel()) startChase(reelN++ % 5 + 1, 'title'); else if (idleT > 9 || forceDemo()) startChase(demoSpin++ % 5 + 1, 'demo');   // the attract loop opens on a chase, a different one each time round
+    idleT += dt; if (forceReel()) startChase(reelN++ % 5 + 1, 'title'); else if (idleT > 9 || forceDemo()) { if (!forceDemo() && board && board.length && attractN++ % 2) showBoard('title'); else startChase(demoSpin++ % 5 + 1, 'demo'); }   // the attract loop opens on a chase, a different one each time round
   } else if (mode === 'spawn') {
     if (oven.t >= .98) { mode = 'play'; T.t = 1; T.x = oven.cx; T.row = 0; T.tyaw = 0; T.land = 0; beep(440, .06, 'square', .04, 200); }
   } else if (mode === 'play') {
@@ -497,11 +557,13 @@ function update(dt) {
     }
   } else if (mode === 'dead') {
     if (modeT > 1.25) { lives--; if (lives <= 0 && demo) startChase(demoSpin++ % 5 + 1, 'over');   // a demo that loses still gets a chase, the next one in rotation each time
-    else if (lives <= 0) { mode = 'over'; modeT = 0; if (score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } } else spawn(true); }
+    else if (lives <= 0) { if (score > hi) { hi = score; try { localStorage.setItem('tf_hi', hi); } catch (e) {} } endRun('over'); } else spawn(true); }
   } else if (mode === 'clear') {
     if (modeT > 1.6) startChase((level - 1) % 5 + 1, level === LAST ? 'win' : demo ? 'dcard' : 'next');   // every cleared level earns an intermission
   } else if (mode === 'chase') {
     if (modeT > CH_LEN[chaseN]) endChase();
+  } else if (mode === 'board') {
+    if (modeT > (boardThen === 'title' ? 8 : 14)) leaveBoard();
   } else if (mode === 'dcard') {
     if (modeT > DEMO_CARD) nextLevel();
   } else if (mode === 'over') {
@@ -760,13 +822,13 @@ function bug() {
 function drawHud() {
   const blink = Math.floor(time * 2) % 2, pard = slots.reduce((a, b) => a + b, 0);
   const demoCard = demo && (mode === 'over' || mode === 'dcard');   // the attract loop shows the card too
-  const key = [score, hi, lives, level, pard, mode, demo, fontsReady, touch, (mode === 'card' || mode === 'title' || mode === 'over' || mode === 'win' || demo) ? blink : 0, demoCard, mode === 'chase' ? time : 0].join('|');
+  const key = [score, hi, lives, level, pard, mode, demo, fontsReady, touch, (mode === 'card' || mode === 'title' || mode === 'over' || mode === 'win' || mode === 'initials' || mode === 'board' || demo) ? blink : 0, demoCard, mode === 'chase' ? time : 0, boardV, myRank, ini.L.join(), ini.k, ini.sending, board ? board.length : -1].join('|');
   if (key === hudKey) return; hudKey = key;
   hx.clearRect(0, 0, W, H);
   hx.fillStyle = P.char; hx.fillRect(0, 0, W, 22); hx.fillRect(0, H - 22, W, 22);
   hx.fillStyle = P.must; hx.fillRect(0, 22, W, 1); hx.fillRect(0, H - 23, W, 1);
   const pad = n => String(n).padStart(6, '0');
-  text('1UP ' + pad(score), 12, 12, 12); text('HI ' + pad(Math.max(hi, score)), W / 2, 12, 12, P.must, 'center');
+  text('1UP ' + pad(score), 12, 12, 12); text('HI ' + pad(Math.max(hi, score, board && board[0] ? board[0].score : 0)), W / 2, 12, 12, P.must, 'center');
   text('PARDONED ' + pard + '/5', W - 12, 12, 12, P.cream, 'right');
   text('TURKEYS', 12, H - 10, 11, P.tealLt); for (let i = 0; i < lives; i++) sputnik(94 + i * 16, H - 11, 6, P.orange);
   text(level > LAST ? 'LEFTOVERS ' + (level - LAST) : 'LEVEL ' + level + ' OF ' + LAST, W - 12, H - 10, 11, P.tealLt, 'right');
@@ -810,6 +872,8 @@ function drawHud() {
     bug();
   }
   if (mode === 'chase') { drawChase(chaseN, modeT); if (!demo && modeT > 1.2) text((touch ? 'TAP' : 'SPACE OR TAP') + ' TO SKIP', W / 2, 306, 8, '#5f7d7a', 'center'); bug(); }
+  if (mode === 'initials') drawInitials(blink);
+  if (mode === 'board') drawBoard(blink);
   if (demoCard) {
     hx.fillStyle = 'rgba(20,28,32,.84)'; hx.fillRect(0, 23, W, H - 46);
     sputnik(80, 84, 30, P.must); sputnik(566, 76, 22, P.teal); sputnik(548, 250, 13, P.orange); sputnik(70, 262, 15, P.teal);
@@ -818,11 +882,45 @@ function drawHud() {
   gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, hudTex); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, hc); gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
 }
+const INI_X = [260, 320, 380], OKB = [272, 262, 96, 26];
+function tri(x, y, up, col) { hx.fillStyle = col; hx.beginPath(); hx.moveTo(x - 9, y + (up ? 6 : -6)); hx.lineTo(x + 9, y + (up ? 6 : -6)); hx.lineTo(x, y + (up ? -7 : 7)); hx.fill(); }
+function panel() { hx.fillStyle = 'rgba(20,28,32,.9)'; hx.fillRect(0, 23, W, H - 46); sputnik(80, 84, 30, P.must); sputnik(566, 76, 22, P.teal); sputnik(548, 262, 13, P.orange); sputnik(70, 268, 15, P.teal); }
+function drawInitials(blink) {                      // classic three-letter sign-in
+  panel();
+  text('YOU MADE THE TOP TEN!', W / 2, 52, 26, P.must, 'center', BUN, 2);
+  text('SCORE ' + String(score).padStart(6, '0') + '  •  ' + (level > LAST ? 'LEFTOVERS ' + (level - LAST) : 'LEVEL ' + level), W / 2, 84, 12, P.cream, 'center');
+  text('SIGN THE HALL OF PARDONS', W / 2, 110, 10, P.tealLt, 'center');
+  for (let i = 0; i < 3; i++) {
+    const x = INI_X[i], on = ini.k === i;
+    hx.fillStyle = on ? '#24343a' : P.char; hx.fillRect(x - 24, 163, 48, 54);
+    hx.strokeStyle = on ? P.must : '#3c5257'; hx.lineWidth = on ? 2 : 1; hx.strokeRect(x - 24 + .5, 163.5, 47, 53);
+    text(ABC[ini.L[i]], x, 192, 34, on && blink ? P.must : P.cream, 'center', BUN, 2);
+    tri(x, 149, true, on ? P.must : '#5f7d7a'); tri(x, 233, false, on ? P.must : '#5f7d7a');
+  }
+  const okOn = ini.k === 3;
+  hx.fillStyle = okOn ? P.must : P.char; hx.fillRect(OKB[0], OKB[1], OKB[2], OKB[3]); hx.strokeStyle = P.must; hx.lineWidth = 1.5; hx.strokeRect(OKB[0] + .5, OKB[1] + .5, OKB[2] - 1, OKB[3] - 1);
+  text(ini.sending ? '...' : 'OK', W / 2, OKB[1] + 13.5, 14, okOn ? P.char : P.cream, 'center', BUN, okOn ? .01 : 1);
+  text(touch ? 'TAP THE ARROWS TO PICK YOUR LETTERS, THEN OK' : 'TYPE YOUR INITIALS OR USE THE ARROWS  •  ENTER WHEN DONE', W / 2, 310, 9, P.tealLt, 'center');
+}
+function drawBoard(blink) {                         // the shared top ten
+  panel();
+  text('HALL OF PARDONS', W / 2, 50, 26, P.must, 'center', BUN, 2);
+  text('TOP TEN TURKEY WRANGLERS', W / 2, 76, 9, P.tealLt, 'center');
+  if (!board || !board.length) text('NO SCORES YET - BE THE FIRST!', W / 2, 180, 14, P.cream, 'center');
+  else board.forEach((e, i) => {
+    const y = 100 + i * 19, me = i === myRank, col = me ? (blink ? P.must : P.orange) : i === 0 ? P.must : P.cream;
+    text((i + 1) + '.', 222, y, 13, col, 'right'); text(e.ini, 236, y, 13, col);
+    text(String(e.score).padStart(6, '0'), 400, y, 13, col, 'right');
+    text(e.level > LAST ? 'LEFTOVERS ' + (e.level - LAST) : 'LEVEL ' + e.level, 414, y, 9, me ? col : '#5f7d7a');
+  });
+  if (blink && !(boardThen === 'title' && demo)) text((touch ? 'TAP' : 'PRESS SPACE OR TAP') + ' TO CONTINUE', W / 2, 302, 11, P.cream, 'center');
+  bug();
+}
 let fontsReady = 0;
 if (document.fonts && document.fonts.load) Promise.all([document.fonts.load('20px Lobster'), document.fonts.load('20px Bungee')]).then(() => { fontsReady = 1; }, () => {});
 
 // ---------- loop ----------
-initLanes(); let last = 0;
+initLanes(); loadBoard(); let last = 0;
 function frame(ts) { const dt = Math.min(.05, (ts - last) / 1000 || 0); last = ts; update(dt); render(); requestAnimationFrame(frame); }
 window.__tf = { set level(v) { level = v; initLanes(); }, get state() { return { mode, demo, score, lives, level, cardTo, cardFrom, row: T.row, x: T.x, slots: slots.slice(), ovenT: oven.t }; }, step(n, dt) { for (let i = 0; i < n; i++) update(dt); }, chase(n) { startChase(n, 'next'); } };
 requestAnimationFrame(frame);
