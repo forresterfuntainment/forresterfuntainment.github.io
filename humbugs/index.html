@@ -765,7 +765,7 @@ function drawChase(n,t){
   text(CH_CAP[n],HW/2,34,13,P.must,'center');
   if(!attract&&chaseThen!=='reel'&&t>1.2)text((isCoarse?'TAP':'SPACE OR TAP')+' TO SKIP',HW/2,318,8,'#5f7d7a','center');
   if(chaseThen==='reel'&&!attract)text('SCENE '+n+' OF 5',HW/2,318,8,'#5f7d7a','center');
-  hbug()}
+  if(n===5)hbug()}
 
 // ---------- the screens ----------
 const SHOW=[118,236,196,22],NICE=[326,236,196,22];
@@ -822,7 +822,7 @@ function drawLayer(){hx.clearRect(0,0,HW,HH);const blink=Math.floor(frame/30)%2=
     case'win':drawWinH(blink);break;case'over':drawOverH(blink);break;case'initials':drawInitials(blink);break;case'board':drawBoardH(blink);break;default:return false}
   ctx.drawImage(hc,0,0,W,H);return true}
 function canvasHit(e){const r=cv.getBoundingClientRect(),x=(e.clientX-r.left)/r.width*HW,y=(e.clientY-r.top)/r.height*HH,inR=b=>x>=b[0]&&x<=b[0]+b[2]&&y>=b[1]&&y<=b[1]+b[3];
-  if(['front','title','chase','win','over','board'].includes(state)&&!attract&&inR(HOMEB)){location.href='../';return true}
+  if(['front','title','win','over','board'].includes(state)&&!attract&&inR(HOMEB)){location.href='../';return true}
   if(state==='title'){if(inR(SHOW)){attract=false;startChase(1,'reel');return true}if(board&&inR(NICE)){showBoard('title');return true}}
   if(state==='initials'){for(let i=0;i<3;i++){if(Math.abs(x-INI_X[i])<26){if(y>135&&y<160){ini.k=i;iniLetter(1);return true}if(y>222&&y<246){ini.k=i;iniLetter(-1);return true}if(y>160&&y<220){ini.k=i;return true}}}
     if(inR(OKB)){submitIni();return true}return true}
